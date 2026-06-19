@@ -99,6 +99,20 @@ subscription, so it **cannot** implement them — they are inherited from the re
 
 The `sharedSecret` here **must equal** the worker's shared-secret setting.
 
+## Microsoft Graph permissions
+
+The bot's Azure AD app needs these **application** permissions (admin-consented):
+
+| Permission | Enables |
+|---|---|
+| `Calls.JoinGroupCall.All` | answer / join Teams calls and meetings |
+| `Calls.AccessMedia.All` | access the call's real-time audio/video media (`Skype.Bots.Media`) |
+| `Chat.Read.All` | resolve chat / thread ids and read message context |
+| `ChatMessage.Read.Chat` | read messages in chats the bot is installed in (resource-specific consent) |
+| `Sites.ReadWrite.All` | upload files / minutes to SharePoint (OneDrive) for chat attachments |
+
+Outbound "call me back" additionally needs `Calls.InitiateGroupCall.All` (skip if unused).
+
 ## Configure
 
 Two sources are supported (per the Hermes docs); **config.yaml takes precedence, `.env`
