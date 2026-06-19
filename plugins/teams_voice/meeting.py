@@ -63,6 +63,11 @@ async def _deliver_to_teams(conversation_id: str, text: str) -> bool:
     pconfig = type("_PConfig", (), {"extra": {}})()
     try:
         result = await _standalone_send(pconfig, chat_id=conversation_id, message=text)
+        if not result.get("success"):
+            logger.warning(
+                "[teams_voice] minutes delivery to %s failed: %s",
+                conversation_id, result.get("error"),
+            )
         return bool(result.get("success"))
     except Exception:  # noqa: BLE001
         logger.error("[teams_voice] recap delivery failed", exc_info=True)

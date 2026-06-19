@@ -107,3 +107,19 @@ def test_create_response_guarded_on_active():
     s._response_active = False
     asyncio.run(s.create_response())
     assert sent[-1]["type"] == "response.create"
+
+
+def test_send_function_result_guarded_on_active():
+    s, sent = _session()
+    s._response_active = True  # a response is already in progress
+    asyncio.run(s.send_function_result("call-1", "the tool result"))
+    types = [m["type"] for m in sent]
+    assert "conversation.item.create" in types  # tool output item is still added
+    assert "response.create" not in types  # but no second response (guarded)
+
+
+def test_allowlist_inherits_chat_allowed_users(monkeypatch):
+    monkeypatch.delenv("TEAMS_VOICE_ALLOWLIST", raising=False)
+    monkeypatch.setenv("TEAMS_ALLOWED_USERS", "aad-shared, Other")
+    cfg = resolve_config(extra={"shared_secret": "s"})
+    assert cfg.allowlist == ("aad-shared", "other")  # voice inherits the chat allowlist

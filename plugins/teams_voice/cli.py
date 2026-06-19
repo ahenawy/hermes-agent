@@ -58,6 +58,11 @@ def teams_voice_command(args) -> int:
             from dataclasses import replace
 
             cfg = replace(cfg, host=args.host or cfg.host, port=args.port or cfg.port)
+        if cfg.host not in ("127.0.0.1", "localhost", "::1"):
+            print(
+                f"warning: bridge bound to non-loopback host {cfg.host!r} — the shared "
+                "secret is exposed to that interface; prefer 127.0.0.1 in production"
+            )
 
         handler_kind = getattr(args, "handler", "logging")
         factory = CallSessionHandler  # default: log only, no audio back

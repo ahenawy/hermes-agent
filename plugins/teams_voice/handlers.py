@@ -94,6 +94,7 @@ class RealtimeCallSessionHandler(BaseTeamsCallHandler):
         self._ambient_last_ts: dict[str, int] = {}
         self._vision_budget = VisionBudget(bridge_config.max_vision_per_minute if bridge_config else 30)
         self._last_speaker = ""  # from unmixed-audio speaker_name, for attribution
+        self._auto_on = True  # server-VAD auto-response (off until 1:1 is confirmed)
         self._tools = CallToolRunner(self)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
@@ -116,6 +117,12 @@ class RealtimeCallSessionHandler(BaseTeamsCallHandler):
         except Exception:  # noqa: BLE001 — keep socket; worker shows neutral avatar
             logger.error("[teams_voice] realtime connect failed for %s", session.call_id, exc_info=True)
             return
+        # Start in MANUAL response mode (auto-response off): until participants is
+        # known, no auto-reply can leak in a meeting. We enable auto-response only
+        # once we learn it's a 1:1; group/unknown stays manual (we create_response
+        # ourselves for addressed turns). Race-free.
+        await rt.set_auto_response(False)
+        self._auto_on = False
         # Greeting fires on recording-active (greet-on-answer); show a neutral face now.
         await self._safe_expression(expression.NEUTRAL)
         self._ambient_task = asyncio.create_task(self._ambient_vision_loop())
@@ -161,11 +168,13 @@ class RealtimeCallSessionHandler(BaseTeamsCallHandler):
 
     async def on_participants(self, session: CallSession, msg: protocol.Participants) -> None:
         await super().on_participants(session, msg)  # sets session.human_count
-        # Race-free group gate: in a meeting (2+ humans) turn OFF server-VAD
-        # auto-response, so the model only speaks when we explicitly create a
-        # response for an addressed turn (no audio can leak before a cancel).
+        # Race-free group gate: enable server-VAD auto-response only for a confirmed
+        # 1:1; meetings (2+ humans) stay manual (we create a response only for an
+        # addressed turn), so no audio can leak before a cancel.
+        enable = session.human_count < 2
         if self._rt is not None:
-            await self._rt.set_auto_response(session.human_count < 2)
+            await self._rt.set_auto_response(enable)
+        self._auto_on = enable
 
     async def on_audio_frame(self, session: CallSession, msg: protocol.AudioFrame) -> None:
         if self._require_recording and not session.recording_active:
@@ -309,12 +318,13 @@ class RealtimeCallSessionHandler(BaseTeamsCallHandler):
             return
         # 2) Group-call gate: stay silent unless addressed (2+ humans).
         now = time.monotonic() * 1000.0
-        is_group, decision = self._group_decision(text, now)
+        _is_group, decision = self._group_decision(text, now)
         if decision.respond:
             if decision.addressed:
                 self._last_addressed_ms = now
-            # In group mode auto-response is OFF, so trigger the reply ourselves.
-            if is_group and self._rt is not None:
+            # In manual mode (group, or 1:1 before participants is known) auto-
+            # response is OFF, so trigger the reply ourselves.
+            if not self._auto_on and self._rt is not None:
                 await self._rt.create_response()
         else:
             # Unaddressed meeting turn: egress-drop backstop + cancel any response.

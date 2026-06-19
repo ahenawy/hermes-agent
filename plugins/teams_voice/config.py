@@ -136,7 +136,15 @@ def resolve_config(extra: Mapping[str, Any] | None = None) -> TeamsVoiceConfig:
         or os.getenv("TEAMS_VOICE_TENANT_ID", "").strip()
         or os.getenv("TEAMS_TENANT_ID", "").strip()
     )
-    allowlist = _coerce_list(extra.get("allowlist"), os.getenv("TEAMS_VOICE_ALLOWLIST", ""))
+    # Allowlist: TEAMS_VOICE_ALLOWLIST; when empty, inherit the chat plane's
+    # TEAMS_ALLOWED_USERS so voice + chat share one AAD allowlist.
+    allowlist = _coerce_list(extra.get("allowlist"), os.getenv("TEAMS_VOICE_ALLOWLIST", "")) or _coerce_list(
+        None, os.getenv("TEAMS_ALLOWED_USERS", "")
+    )
+    rr = extra.get("require_recording_status")
+    if rr is None:
+        rr = os.getenv("TEAMS_VOICE_REQUIRE_RECORDING_STATUS", "true")
+    require_recording = str(rr).strip().lower() not in ("0", "false", "no", "off")  # default True
     max_vision = _coerce_int(
         extra.get("max_vision_per_minute") or os.getenv("TEAMS_VOICE_MAX_VISION_PER_MINUTE", ""), 30
     )
@@ -156,6 +164,7 @@ def resolve_config(extra: Mapping[str, Any] | None = None) -> TeamsVoiceConfig:
         port=port,
         path=path,
         hmac_window_ms=window,
+        require_recording_status=require_recording,
         worker_base_url=worker_base_url,
         tenant_id=tenant_id,
         allowlist=allowlist,
