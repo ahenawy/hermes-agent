@@ -90,6 +90,9 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         self._gate_cfg = group_call_gate.GroupCallGateConfig(wake_phrases=("assistant", "hermes"))
         self._last_addressed_ms: float | None = None
         self._drop_response = False  # deterministic egress drop for gated turns
+        # Ambient continuous vision (push the latest changed frame every ~6s).
+        self._ambient_task: asyncio.Task | None = None
+        self._ambient_interval_s = 6.0
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -118,6 +121,7 @@ class RealtimeCallSessionHandler(CallSessionHandler):
             return
         # Greeting fires on recording-active (greet-on-answer); show a neutral face now.
         await self._safe_expression(expression.NEUTRAL)
+        self._ambient_task = asyncio.create_task(self._ambient_vision_loop())
 
     def _first_name(self) -> str:
         name = (self._caller.display_name if self._caller else "") or ""
@@ -179,12 +183,43 @@ class RealtimeCallSessionHandler(CallSessionHandler):
             )
         )
 
+    async def on_dtmf(self, session: CallSession, msg: protocol.Dtmf) -> None:
+        # Surface keypad input to the realtime model (recording-gated) so it can
+        # run "press 1 to…" flows.
+        if not session.recording_active or self._rt is None:
+            return
+        await self._rt.send_user_text(f"The caller pressed the {msg.digit} key on the keypad.")
+
     async def on_session_end(self, session: CallSession, msg: protocol.SessionEnd) -> None:
         await super().on_session_end(session, msg)
+        if self._ambient_task is not None:
+            self._ambient_task.cancel()
+            self._ambient_task = None
         self._vision.clear()
         if self._rt is not None:
             await self._rt.close()
             self._rt = None
+
+    async def _ambient_vision_loop(self) -> None:
+        """Every ~6s, push the latest *changed* frame to the model (no forced
+        response), so it stays visually aware between explicit look_at_screen calls."""
+        last_ts: int | None = None
+        try:
+            while True:
+                await asyncio.sleep(self._ambient_interval_s)
+                session = self._session
+                if self._rt is None or session is None or not session.recording_active:
+                    continue
+                frame = self._vision.latest()
+                if frame is None or frame.ts == last_ts:
+                    continue  # nothing new since last push (dedup)
+                last_ts = frame.ts
+                try:
+                    await self._rt.send_image(frame.data_url())
+                except Exception:  # noqa: BLE001 — ambient, best-effort
+                    pass
+        except asyncio.CancelledError:
+            raise
 
     # ── model -> worker callbacks ────────────────────────────────────────────
 
@@ -305,7 +340,9 @@ class RealtimeCallSessionHandler(CallSessionHandler):
             if name == "hermes_agent_consult":
                 return await self._consult.ask(str(args.get("query", "")))
             if name == "look_at_screen":
-                return await self._look_at_screen(str(args.get("question", "")), args.get("source"))
+                return await self._look_at_screen(
+                    str(args.get("question", "")), args.get("source"), str(args.get("scope") or "live")
+                )
             if name == "show_to_caller":
                 return await self._show_to_caller(str(args.get("prompt", "")))
             if name == "call_me_back":
@@ -315,29 +352,38 @@ class RealtimeCallSessionHandler(CallSessionHandler):
             return "Sorry, that didn't work."
         return f"Unknown tool: {name}."
 
-    async def _look_at_screen(self, question: str, source: str | None) -> str:
-        want = "camera" if str(source or "").lower() == "camera" else "screenshare"
-        frame = self._vision.latest(want) or self._vision.latest()
-        if frame is None:
-            return "I can't see a shared screen or camera right now."
+    async def _look_at_screen(self, question: str, source: str | None, scope: str = "live") -> str:
         prompt = question.strip() or "Describe what you see."
+        if scope == "history":
+            frames = self._vision.history(limit=6)
+            if not frames:
+                return "I don't have any earlier frames to look back on."
+            content: list[dict] = [{"type": "text", "text": prompt}]
+            for f in frames:  # timestamped, attributed keyframes
+                content.append({"type": "text", "text": f"(earlier, from {f.describe()})"})
+                content.append({"type": "image_url", "image_url": {"url": f.data_url()}})
+        else:
+            want = "camera" if str(source or "").lower() == "camera" else "screenshare"
+            frame = self._vision.latest(want) or self._vision.latest()
+            if frame is None:
+                return "I can't see a shared screen or camera right now."
+            content = [
+                {"type": "text", "text": f"{prompt} (looking at the {frame.describe()})"},
+                {"type": "image_url", "image_url": {"url": frame.data_url()}},
+            ]
+        return await self._vision_consult(content)
+
+    async def _vision_consult(self, content: list[dict]) -> str:
         try:
             from agent.auxiliary_client import async_call_llm
 
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": frame.data_url()}},
-                    ],
-                }
-            ]
-            resp = await async_call_llm(task="vision", messages=messages, max_tokens=400)
+            resp = await async_call_llm(
+                task="vision", messages=[{"role": "user", "content": content}], max_tokens=400
+            )
             text = resp.choices[0].message.content if resp and resp.choices else ""
             return (text or "").strip() or "I couldn't quite make that out."
         except Exception:  # noqa: BLE001
-            logger.error("[teams_voice] look_at_screen vision call failed", exc_info=True)
+            logger.error("[teams_voice] vision consult failed", exc_info=True)
             return "I had trouble looking at that."
 
     async def _show_to_caller(self, prompt: str) -> str:

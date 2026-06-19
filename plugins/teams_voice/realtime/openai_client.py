@@ -275,13 +275,13 @@ class RealtimeSession:
             self._response_active = False
             await self._send({"type": "response.cancel"})
 
-    async def request_say(self, instruction: str) -> None:
-        """Inject an instruction and trigger a spoken response.
+    async def send_user_text(self, text: str, *, respond: bool = True) -> None:
+        """Inject a user-role text item; optionally trigger a spoken response.
 
-        Used for outbound delivery ("deliver this result, then say goodbye: …")
-        where there is no caller turn to respond to.
+        ``respond`` is guarded on ``_response_active`` so we never hit
+        'conversation already has an active response'.
         """
-        if self._closed or not instruction:
+        if self._closed or not text:
             return
         await self._send(
             {
@@ -289,11 +289,37 @@ class RealtimeSession:
                 "item": {
                     "type": "message",
                     "role": "user",
-                    "content": [{"type": "input_text", "text": instruction}],
+                    "content": [{"type": "input_text", "text": text}],
                 },
             }
         )
-        await self._send({"type": "response.create"})
+        if respond and not self._response_active:
+            self._response_active = True
+            await self._send({"type": "response.create"})
+
+    async def request_say(self, instruction: str) -> None:
+        """Inject an instruction and trigger a spoken response (outbound delivery
+        / greeting, where there is no caller turn to respond to)."""
+        await self.send_user_text(instruction, respond=True)
+
+    async def send_image(self, image_url: str) -> None:
+        """Push an ambient image into the conversation with NO forced response.
+
+        Keeps the realtime model continuously visually aware (the openclaw
+        ``sendImage`` equivalent). Best-effort.
+        """
+        if self._closed or not image_url:
+            return
+        await self._send(
+            {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_image", "image_url": image_url}],
+                },
+            }
+        )
 
     async def send_function_result(self, call_id: str, output: str) -> None:
         """Return a tool result to the model and ask it to continue speaking.

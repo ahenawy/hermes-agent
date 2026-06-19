@@ -43,6 +43,14 @@ LOOK_AT_SCREEN = {
                 "enum": ["screen", "camera"],
                 "description": "Which feed to look at; defaults to the shared screen.",
             },
+            "scope": {
+                "type": "string",
+                "enum": ["live", "history"],
+                "description": (
+                    "'live' = the current frame (default); 'history' = recent "
+                    "keyframes, to answer about something shown earlier."
+                ),
+            },
         },
         "required": ["question"],
     },

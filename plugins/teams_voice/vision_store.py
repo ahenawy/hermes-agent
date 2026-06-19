@@ -23,6 +23,13 @@ class StoredFrame:
     def data_url(self) -> str:
         return f"data:{self.mime};base64,{self.data_base64}"
 
+    def describe(self) -> str:
+        """Attribution label, e.g. "Alice's shared screen" / "the camera"."""
+        surface = "shared screen" if self.source == "screenshare" else "camera"
+        if self.participant_name:
+            return f"{self.participant_name}'s {surface}"
+        return surface
+
 
 class VisionStore:
     def __init__(self, history: int = 16) -> None:
