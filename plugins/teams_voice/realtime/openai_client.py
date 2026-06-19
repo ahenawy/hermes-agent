@@ -55,6 +55,9 @@ class RealtimeConfig:
     vad_threshold: float = 0.5
     prefix_padding_ms: int = 300
     silence_duration_ms: int = 500
+    # Caller-audio transcription (for wake words / verbal interrupts). Empty
+    # string disables it (some deployments don't support the field).
+    input_transcribe_model: str = "whisper-1"
 
     @property
     def configured(self) -> bool:
@@ -115,6 +118,10 @@ def realtime_config_from_env(block: "dict[str, Any] | None" = None) -> RealtimeC
         return thr, prefix, silence
 
     vad_threshold, prefix_padding_ms, silence_duration_ms = _vad()
+    # "" / "none" / "off" disables caller transcription.
+    transcribe_model = _pick(block, "input_transcribe_model", "TEAMS_VOICE_INPUT_TRANSCRIBE_MODEL", "whisper-1")
+    if transcribe_model.lower() in ("none", "off", "disabled"):
+        transcribe_model = ""
     is_azure = backend == "azure" or bool(azure_endpoint) or "azure.com" in explicit_url
 
     if is_azure:
@@ -142,6 +149,7 @@ def realtime_config_from_env(block: "dict[str, Any] | None" = None) -> RealtimeC
             vad_threshold=vad_threshold,
             prefix_padding_ms=prefix_padding_ms,
             silence_duration_ms=silence_duration_ms,
+            input_transcribe_model=transcribe_model,
         )
 
     return RealtimeConfig(
@@ -155,6 +163,7 @@ def realtime_config_from_env(block: "dict[str, Any] | None" = None) -> RealtimeC
         vad_threshold=vad_threshold,
         prefix_padding_ms=prefix_padding_ms,
         silence_duration_ms=silence_duration_ms,
+        input_transcribe_model=transcribe_model,
     )
 
 
@@ -179,7 +188,8 @@ class RealtimeSession:
 
         # Callbacks (wired by the handler).
         self.on_audio_delta: Optional[AsyncCb] = None  # (pcm24k: bytes)
-        self.on_transcript_delta: Optional[AsyncCb] = None  # (text: str)
+        self.on_transcript_delta: Optional[AsyncCb] = None  # (text: str) — bot reply
+        self.on_input_transcript: Optional[AsyncCb] = None  # (text: str) — caller turn
         self.on_speech_started: Optional[AsyncCb] = None  # () -> barge-in
         self.on_response_done: Optional[AsyncCb] = None  # ()
         self.on_function_call: Optional[AsyncCb] = None  # (name, call_id, args_json)
@@ -221,6 +231,11 @@ class RealtimeSession:
                 "create_response": True,
             },
         }
+        # Transcribe the caller's audio so the handler can detect wake words and
+        # verbal interrupts. Configurable/optional: if unsupported, set the model
+        # to "" and the gate/interrupts degrade gracefully (VAD barge-in still works).
+        if self._cfg.input_transcribe_model:
+            session["input_audio_transcription"] = {"model": self._cfg.input_transcribe_model}
         if self.tools:
             session["tools"] = self.tools
             session["tool_choice"] = "auto"
@@ -332,6 +347,10 @@ class RealtimeSession:
                 await self._safe(self.on_transcript_delta, text)
         elif etype == "input_audio_buffer.speech_started":
             await self._safe(self.on_speech_started)
+        elif etype == "conversation.item.input_audio_transcription.completed":
+            text = evt.get("transcript") or ""
+            if text:
+                await self._safe(self.on_input_transcript, text)
         elif etype == "response.done":
             # A response may carry function calls (no audio) and/or spoken output.
             resp = evt.get("response") or {}
