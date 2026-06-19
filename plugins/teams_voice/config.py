@@ -49,6 +49,14 @@ class TeamsVoiceConfig:
     # Outbound "call me back": the worker's loopback HTTP endpoint + default tenant.
     worker_base_url: str = "http://127.0.0.1:9440"
     tenant_id: str = ""
+    # Caller allowlist (AAD object ids or display names). Empty = allow all.
+    allowlist: tuple[str, ...] = ()
+    # Per-call vision spend cap across look_at_screen + ambient push (0 = unlimited).
+    max_vision_per_minute: int = 30
+    # Agent session continuity: "per-call" | "per-thread" | "per-aad".
+    session_scope: str = "per-call"
+    # Group-call wake phrases (speak only when addressed).
+    wake_phrases: tuple[str, ...] = ("assistant", "hermes")
 
     @property
     def configured(self) -> bool:
@@ -121,6 +129,16 @@ def resolve_config(extra: Mapping[str, Any] | None = None) -> TeamsVoiceConfig:
         or os.getenv("TEAMS_VOICE_TENANT_ID", "").strip()
         or os.getenv("TEAMS_TENANT_ID", "").strip()
     )
+    allowlist = _coerce_list(extra.get("allowlist"), os.getenv("TEAMS_VOICE_ALLOWLIST", ""))
+    max_vision = _coerce_int(
+        extra.get("max_vision_per_minute") or os.getenv("TEAMS_VOICE_MAX_VISION_PER_MINUTE", ""), 30
+    )
+    session_scope = (
+        str(extra.get("session_scope") or "").strip()
+        or os.getenv("TEAMS_VOICE_SESSION_SCOPE", "").strip()
+        or "per-call"
+    )
+    wake = _coerce_list(extra.get("wake_phrases"), os.getenv("TEAMS_VOICE_WAKE_PHRASES", ""))
 
     return TeamsVoiceConfig(
         shared_secret=shared_secret,
@@ -130,4 +148,17 @@ def resolve_config(extra: Mapping[str, Any] | None = None) -> TeamsVoiceConfig:
         hmac_window_ms=window,
         worker_base_url=worker_base_url,
         tenant_id=tenant_id,
+        allowlist=allowlist,
+        max_vision_per_minute=max_vision,
+        session_scope=session_scope,
+        wake_phrases=wake or ("assistant", "hermes"),
     )
+
+
+def _coerce_list(value: Any, env: str) -> tuple[str, ...]:
+    """List from a config list or a comma-separated env string (lowercased, trimmed)."""
+    if isinstance(value, (list, tuple)):
+        items = [str(v).strip() for v in value]
+    else:
+        items = [p.strip() for p in (env or "").split(",")]
+    return tuple(i.lower() for i in items if i)

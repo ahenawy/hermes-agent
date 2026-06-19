@@ -28,6 +28,7 @@ from .config import BYTES_PER_FRAME, FRAME_DURATION_MS, PCM_SAMPLE_RATE_HZ, Team
 from .echo_guard import EchoGuard
 from .outbound import OutboundError, place_call
 from .realtime.openai_client import REALTIME_SAMPLE_RATE_HZ, RealtimeConfig, RealtimeSession
+from .vision_budget import VisionBudget
 from .vision_store import StoredFrame, VisionStore
 
 logger = logging.getLogger(__name__)
@@ -87,12 +88,15 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         self._vision = VisionStore()
         self._consult = AgentConsult()
         # Group-call gate state.
-        self._gate_cfg = group_call_gate.GroupCallGateConfig(wake_phrases=("assistant", "hermes"))
+        wake = tuple(bridge_config.wake_phrases) if (bridge_config and bridge_config.wake_phrases) else ("assistant", "hermes")
+        self._gate_cfg = group_call_gate.GroupCallGateConfig(wake_phrases=wake)
         self._last_addressed_ms: float | None = None
         self._drop_response = False  # deterministic egress drop for gated turns
-        # Ambient continuous vision (push the latest changed frame every ~6s).
+        # Ambient continuous vision (push the latest changed frame per source ~6s).
         self._ambient_task: asyncio.Task | None = None
         self._ambient_interval_s = 6.0
+        self._ambient_last_ts: dict[str, int] = {}
+        self._vision_budget = VisionBudget(bridge_config.max_vision_per_minute if bridge_config else 30)
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -104,6 +108,25 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         # If this is the delivery leg of a call-back, fetch the pending result.
         if self._outbound:
             self._pending_greeting = _PENDING_OUTBOUND.pop(msg.call_id, None)
+
+        # Caller allowlist (enforced only when configured): reject unmatched inbound.
+        if not self._outbound and self._bridge and self._bridge.allowlist:
+            ident = (msg.caller.aad_id or "").lower()
+            name = (msg.caller.display_name or "").lower()
+            if ident not in self._bridge.allowlist and name not in self._bridge.allowlist:
+                logger.info("[teams_voice] caller not allowlisted; rejecting %s", session.call_id)
+                await session._ws.close()
+                return
+
+        # Agent session continuity scope.
+        scope = self._bridge.session_scope if self._bridge else "per-call"
+        if scope == "per-thread":
+            skey = msg.thread_id or msg.call_id
+        elif scope == "per-aad":
+            skey = msg.caller.aad_id or msg.call_id
+        else:
+            skey = msg.call_id
+        self._consult = AgentConsult(session_id=f"teams:{skey}")
 
         rt = RealtimeSession(replace(self._cfg, instructions=self._build_instructions()))
         rt.tools = realtime_tools.default_tools()
@@ -208,21 +231,25 @@ class RealtimeCallSessionHandler(CallSessionHandler):
     async def _ambient_vision_loop(self) -> None:
         """Every ~6s, push the latest *changed* frame to the model (no forced
         response), so it stays visually aware between explicit look_at_screen calls."""
-        last_ts: int | None = None
         try:
             while True:
                 await asyncio.sleep(self._ambient_interval_s)
                 session = self._session
                 if self._rt is None or session is None or not session.recording_active:
                     continue
-                frame = self._vision.latest()
-                if frame is None or frame.ts == last_ts:
-                    continue  # nothing new since last push (dedup)
-                last_ts = frame.ts
-                try:
-                    await self._rt.send_image(frame.data_url())
-                except Exception:  # noqa: BLE001 — ambient, best-effort
-                    pass
+                # Push each source (screen + camera) that changed since last time.
+                # The worker only emits scene-change frames, so a new ts == a new scene.
+                for src in ("screenshare", "camera"):
+                    frame = self._vision.latest(src)
+                    if frame is None or frame.ts == self._ambient_last_ts.get(src):
+                        continue
+                    if not self._vision_budget.try_consume():
+                        break  # over the per-minute vision cap
+                    self._ambient_last_ts[src] = frame.ts
+                    try:
+                        await self._rt.send_image(frame.data_url())
+                    except Exception:  # noqa: BLE001 — ambient, best-effort
+                        pass
         except asyncio.CancelledError:
             raise
 
@@ -351,7 +378,7 @@ class RealtimeCallSessionHandler(CallSessionHandler):
                     str(args.get("question", "")), args.get("source"), str(args.get("scope") or "live")
                 )
             if name == "show_to_caller":
-                return await self._show_to_caller(str(args.get("prompt", "")))
+                return await self._show_to_caller(str(args.get("prompt", "")), args.get("count", 1))
             if name == "call_me_back":
                 return await self._call_me_back(str(args.get("message", "")))
         except Exception:  # noqa: BLE001 — a tool fault must not break the call
@@ -360,6 +387,8 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         return f"Unknown tool: {name}."
 
     async def _look_at_screen(self, question: str, source: str | None, scope: str = "live") -> str:
+        if not self._vision_budget.try_consume():
+            return "I've looked at a lot just now — give me a moment before the next one."
         prompt = question.strip() or "Describe what you see."
         if scope == "history":
             frames = self._vision.history(limit=6)
@@ -390,31 +419,47 @@ class RealtimeCallSessionHandler(CallSessionHandler):
             text = resp.choices[0].message.content if resp and resp.choices else ""
             return (text or "").strip() or "I couldn't quite make that out."
         except Exception:  # noqa: BLE001
+            self._vision_budget.refund()  # consult failed before the model — give it back
             logger.error("[teams_voice] vision consult failed", exc_info=True)
             return "I had trouble looking at that."
 
-    async def _show_to_caller(self, prompt: str) -> str:
+    async def _show_to_caller(self, prompt: str, count: object = 1) -> str:
         prompt = prompt.strip()
         if not prompt:
             return "What would you like me to show?"
         try:
+            n = max(1, min(int(count), 3))
+        except (TypeError, ValueError):
+            n = 1
+        try:
             from tools.image_generation_tool import image_generate_tool
 
-            raw = await asyncio.to_thread(lambda: image_generate_tool(prompt=prompt, aspect_ratio="landscape"))
-            data = json.loads(raw)
-            if not data.get("success") or not data.get("image"):
-                return "I couldn't create that image."
-            img_bytes = Path(data["image"]).read_bytes()
-            mime = "image/png" if str(data["image"]).lower().endswith(".png") else "image/jpeg"
-            if self._session is not None:
-                await self._session.send_display_image(
-                    base64.b64encode(img_bytes).decode("ascii"),
-                    mime,
-                    duration_ms=6000,
-                    mode="overlay",
-                    caption=prompt[:80],
+            paths: list[str] = []
+            for _ in range(n):
+                raw = await asyncio.to_thread(
+                    lambda: image_generate_tool(prompt=prompt, aspect_ratio="landscape")
                 )
-            return "I'm showing it on screen now."
+                data = json.loads(raw)
+                if data.get("success") and data.get("image"):
+                    paths.append(data["image"])
+            if not paths:
+                return "I couldn't create that image."
+            # Paced slideshow: 4.5s hold for non-final, 5s for the final image.
+            for idx, path in enumerate(paths):
+                final = idx == len(paths) - 1
+                img_bytes = Path(path).read_bytes()
+                mime = "image/png" if str(path).lower().endswith(".png") else "image/jpeg"
+                if self._session is not None:
+                    await self._session.send_display_image(
+                        base64.b64encode(img_bytes).decode("ascii"),
+                        mime,
+                        duration_ms=5000 if final else 4500,
+                        mode="overlay",
+                        caption=prompt[:80],
+                    )
+                if not final:
+                    await asyncio.sleep(4.0)
+            return "I'm showing it on screen now." if len(paths) == 1 else f"Showing you {len(paths)} images."
         except Exception:  # noqa: BLE001
             logger.error("[teams_voice] show_to_caller failed", exc_info=True)
             return "I made the image but couldn't display it."

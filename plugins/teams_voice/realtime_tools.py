@@ -66,7 +66,11 @@ SHOW_TO_CALLER = {
     "parameters": {
         "type": "object",
         "properties": {
-            "prompt": {"type": "string", "description": "What image to create and show."}
+            "prompt": {"type": "string", "description": "What image to create and show."},
+            "count": {
+                "type": "integer",
+                "description": "How many images to show as a paced slideshow (1-3). Default 1.",
+            },
         },
         "required": ["prompt"],
     },

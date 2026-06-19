@@ -21,8 +21,9 @@ logger = logging.getLogger(__name__)
 class AgentConsult:
     """Lazily-built, reusable one-shot agent runner for a call."""
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, session_id: str | None = None) -> None:
         self._model = model
+        self._session_id = session_id  # session continuity (per-thread/per-aad scope)
         self._agent = None  # run_agent.AIAgent, built on first use
 
     def _agent_kwargs(self) -> dict:
@@ -54,13 +55,20 @@ class AgentConsult:
         key = os.getenv("AZURE_FOUNDRY_API_KEY", "").strip() or os.getenv("OPENAI_API_KEY", "").strip()
         if key and "api_key" not in kwargs:
             kwargs["api_key"] = key
+        if self._session_id:
+            kwargs["session_id"] = self._session_id
         return kwargs
 
     def _run_sync(self, query: str) -> str:
         if self._agent is None:
             from run_agent import AIAgent  # heavy import — defer to first consult
 
-            self._agent = AIAgent(**self._agent_kwargs())
+            kwargs = self._agent_kwargs()
+            try:
+                self._agent = AIAgent(**kwargs)
+            except TypeError:  # older AIAgent without session_id — drop and retry
+                kwargs.pop("session_id", None)
+                self._agent = AIAgent(**kwargs)
         return self._agent.chat(query)
 
     async def ask(self, query: str, *, timeout_s: float = 45.0) -> str:
