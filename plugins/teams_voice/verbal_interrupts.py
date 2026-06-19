@@ -1,6 +1,6 @@
 """Deterministic verbal interrupts — "stop" / "hold on" / Arabic equivalents.
 
-Ported from openclaw #92081. A spoken interrupt cuts playback in code (not by
+A spoken interrupt cuts playback in code (not by
 trusting the model), so it works even when the model wouldn't have stopped. The
 match is **whole-utterance** with filler and configured wake-phrase stripping:
 

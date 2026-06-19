@@ -3,7 +3,7 @@
 The worker forwards sampled ``video.frame`` messages (camera / screenshare). This
 keeps the most recent frame per source for an on-demand ``look_at_screen``, plus a
 bounded ring of recent keyframes for retroactive questions ("what did the earlier
-slide say?"). Port of the openclaw ``msteams-vision-store``.
+slide say?").
 """
 
 from __future__ import annotations

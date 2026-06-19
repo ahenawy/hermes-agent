@@ -5,8 +5,8 @@ default port 9440) that places an outbound 1:1 Teams call. It is HMAC-authentica
 exactly like the WS bridge, except the signed payload is ``"{ts}.{userObjectId}"``
 (the callee's AAD object id) rather than the callId.
 
-Contract (worker `OutboundCallController.cs`):
-  headers: X-OpenClawTeamsBridge-Timestamp, X-OpenClawTeamsBridge-Signature
+Contract (worker outbound-call endpoint):
+  headers: X-OpenClawTeamsBridge-Timestamp, X-OpenClawTeamsBridge-Signature  (must match the worker)
   body:    {"userObjectId": <aad id>, "tenantId": <tenant>}
   200 ->   {"callId": ..., "scenarioId": ...}
 """

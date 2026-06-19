@@ -1,4 +1,4 @@
-"""Avatar emotion heuristic — Python port of openclaw ``expression.ts``.
+"""Avatar emotion heuristic.
 
 A cheap, dependency-free lexical classifier that infers a coarse emotion from the
 assistant's reply text, with no extra model call. The result is sent to the media

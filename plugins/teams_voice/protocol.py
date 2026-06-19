@@ -1,6 +1,6 @@
 """Bridge wire protocol — Python mirror of the .NET worker's ``Protocol.cs``.
 
-The companion media worker (AzureBot / OpenClawBridge) and this driver exchange
+The companion .NET media worker and this driver exchange
 newline-free JSON text frames over one WebSocket per call, discriminated on a
 ``type`` field, camelCase keys. This module models the **inbound** messages
 (worker -> gateway) as dataclasses with a single :func:`decode` entry point, and

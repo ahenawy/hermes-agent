@@ -1,13 +1,13 @@
 # teams_voice — Microsoft Teams real-time voice/video (CVI) bridge driver
 
 The **Python driver** half of the Conversational Video Interface (CVI) for
-Microsoft Teams in Hermes. It is the port of the openclaw TypeScript `voice-call`
-msteams provider (upstream PRs openclaw/openclaw #91438 + #92081).
+Microsoft Teams in Hermes — the cross-platform orchestration for Teams voice/
+video calls.
 
 > **Two processes, one bridge.** Teams real-time call media
 > (`Microsoft.Skype.Bots.Media`) is **Windows/.NET-only**, so the avatar tile and
-> RTP media are rendered by a separate **C# media worker** (`AzureBot` /
-> `OpenClawBridge`). This plugin is the cross-platform *brain*: it hosts the
+> RTP media are rendered by a separate **C# media worker**. This plugin is the
+> cross-platform *brain*: it hosts the
 > WebSocket the worker dials into, runs dialogue + perception, and sends the
 > avatar **driver cues**. The worker renders; this plugin drives.
 
@@ -64,7 +64,7 @@ renders the avatar tile and is paired over the HMAC bridge.
 
 Recent: real ElevenLabs `/with-timestamps` viseme alignment (streaming path; estimator fallback), Arabic visemes, and a Word-openable `.docx` minutes artifact. Remaining: inline DOCX *attachment* to the Teams chat (cross-process delivery is text-only — the artifact is generated and saved).
 
-## Worker-owned (inherited from OpenClawBridge — not in this driver)
+## Worker-owned (inherited from the media worker — not in this driver)
 
 These are Microsoft Graph Calling / `Skype.Bots.Media` concerns. The driver bridges
 audio/video/control but is not connected to Graph Calling and does not drive media
@@ -88,7 +88,7 @@ subscription, so it **cannot** implement them — they are inherited from the re
 ## Wire contract (fixed by the worker — do not drift)
 
 * **Handshake:** `HMAC-SHA256(sharedSecret, "{timestampMs}.{callId}")`, lowercase
-  hex, sent as `X-OpenClawTeamsBridge-Timestamp` / `-Signature` headers on the WS
+  hex, sent as the worker's `X-OpenClawTeamsBridge-Timestamp` / `-Signature` headers on the WS
   upgrade. ±60 s window; accepted `(callId, ts, sig)` tuples are single-use.
 * **Path:** `/voice/msteams/stream/{callId}`.
 * **Audio:** PCM 16 kHz, 16-bit, mono, little-endian; 20 ms / 640-byte frames, base64.
@@ -97,7 +97,7 @@ subscription, so it **cannot** implement them — they are inherited from the re
   / `ping`; outbound `audio.frame` / `expression` / `speech.marks` /
   `display.image` / `assistant.cancel` / `pong`.
 
-The `sharedSecret` here **must equal** the worker's `OpenClawSharedSecret`.
+The `sharedSecret` here **must equal** the worker's shared-secret setting.
 
 ## Configure
 
@@ -133,7 +133,7 @@ plugins:
 **`.env`** (`%LOCALAPPDATA%\hermes\.env`) — the secret store (used directly, or referenced above):
 
 ```bash
-TEAMS_VOICE_SHARED_SECRET=...        # must equal the worker's OpenClawSharedSecret
+TEAMS_VOICE_SHARED_SECRET=...        # must equal the worker's shared-secret setting
 AZURE_FOUNDRY_API_KEY=...            # realtime key (also used by the gateway)
 # fully env-only is fine too:
 TEAMS_VOICE_HOST=127.0.0.1
@@ -157,10 +157,10 @@ hermes teams-voice serve       # run the bridge server (foreground)
 python -m plugins.teams_voice.bridge_server
 ```
 
-Point a worker instance's `OpenClawWsBaseUrl` at this server
+Point the worker's WebSocket base-URL setting at this server
 (`ws://<host>:8443/voice/msteams/stream`) with a matching shared secret. One
-worker identity per gateway — the worker's multi-identity config (`BridgeInstanceSettings`)
-lets one host serve both the openclaw and Hermes gateways.
+worker identity per gateway — the worker's multi-identity config lets one host
+serve multiple gateways.
 
 ## Test
 

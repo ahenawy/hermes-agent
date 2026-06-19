@@ -5,8 +5,8 @@ only in the model's native PCM 24 kHz audio and fires callbacks; resampling to
 the bridge's 16 kHz, frame chunking, expression/viseme emission, and barge-in
 handling all live in the dialogue handler (``handlers.py``).
 
-Mirrors the role of openclaw ``msteams-realtime.ts``. Uses aiohttp's WS client
-(already a bridge dependency) rather than adding the ``websockets`` package.
+Uses aiohttp's WS client (already a bridge dependency) rather than adding the
+``websockets`` package.
 
 Azure note: pass ``base_url`` like
 ``wss://<resource>.openai.azure.com/openai/realtime?api-version=...&deployment=...``
@@ -51,7 +51,7 @@ class RealtimeConfig:
     instructions: str = DEFAULT_INSTRUCTIONS
     base_url: str = DEFAULT_BASE_URL
     api_key_header: str = "Authorization"  # "api-key" for Azure
-    # Server-VAD tuning (mirrors the openclaw realtime provider config).
+    # Server-VAD tuning.
     vad_threshold: float = 0.5
     prefix_padding_ms: int = 300
     silence_duration_ms: int = 500
@@ -339,8 +339,7 @@ class RealtimeSession:
     async def send_image(self, image_url: str) -> None:
         """Push an ambient image into the conversation with NO forced response.
 
-        Keeps the realtime model continuously visually aware (the openclaw
-        ``sendImage`` equivalent). Best-effort.
+        Keeps the realtime model continuously visually aware. Best-effort.
         """
         if self._closed or not image_url:
             return

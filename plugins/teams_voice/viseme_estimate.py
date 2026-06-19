@@ -1,4 +1,4 @@
-"""Viseme lip-shape estimation — Python port of openclaw ``viseme-estimate.ts``.
+"""Viseme lip-shape estimation for the avatar mouth.
 
 Produces a timeline of ``{tMs, visemeId}`` marks for the avatar mouth, using the
 Microsoft/Azure SSML viseme id set (0-21). Two timing sources:

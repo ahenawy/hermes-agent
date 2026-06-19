@@ -1,7 +1,7 @@
 """Golden wire-contract test — the JSON the .NET worker (Protocol.cs) exchanges.
 
 Locks the exact camelCase field names + type discriminators on both directions so
-the Hermes driver and OpenClawBridge can't silently drift.
+the Hermes driver and the .NET media worker can't silently drift.
 """
 
 from __future__ import annotations

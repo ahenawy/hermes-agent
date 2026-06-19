@@ -1,7 +1,7 @@
 """teams_voice plugin — Microsoft Teams real-time voice/video (CVI) bridge driver.
 
 Hosts an HMAC-authenticated WebSocket the companion Windows .NET media worker
-(AzureBot / OpenClawBridge) dials into, and drives the call: dialogue (realtime
+dials into, and drives the call: dialogue (realtime
 or streaming), perception (camera/screen vision), and the avatar rendering cues
 (expression / visemes / show-to-caller). The worker renders the NV12 avatar tile;
 this plugin sends the drivers.

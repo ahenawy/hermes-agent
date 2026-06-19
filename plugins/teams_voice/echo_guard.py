@@ -1,11 +1,11 @@
 """Echo guard — stop the realtime model answering its own playback.
 
-The realtime self-answer bug (openclaw #92081's headline fix): on a speakerphone
+The realtime self-answer bug: on a speakerphone
 the bot's own audio loops back into the mic, the model's VAD hears it, and it
 "replies" to itself. This guard decides, per inbound caller frame, whether to
 forward it to the model.
 
-Logic (ported from the openclaw realtime echo guard):
+Logic:
 
 * Keep a **playout clock** — an estimate of when our outbound audio finishes. The
   model streams faster than realtime, so wall-clock send time != play time; we

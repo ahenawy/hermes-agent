@@ -4,9 +4,9 @@ Values come from (in priority order): the plugin's ``config.extra`` block in
 ``config.yaml`` (when wired through the gateway), then environment variables,
 then safe defaults. Secrets are never logged.
 
-The wire contract is fixed by the companion .NET media worker (AzureBot /
-OpenClawBridge), so the header names, HMAC payload shape, and default path mirror
-that worker exactly — see ``protocol.py`` and ``hmac_auth.py``.
+The wire contract is fixed by the companion .NET media worker, so the header
+names, HMAC payload shape, and default path mirror that worker exactly — see
+``protocol.py`` and ``hmac_auth.py``.
 """
 
 from __future__ import annotations
@@ -24,8 +24,9 @@ BYTES_PER_FRAME = PCM_SAMPLE_RATE_HZ * FRAME_DURATION_MS // 1000 * 2  # 640
 # Default WebSocket path the worker connects to: ``/voice/msteams/stream/{callId}``.
 DEFAULT_PATH = "/voice/msteams/stream"
 
-# HMAC upgrade header names — fixed by the existing worker. The "OpenClaw" prefix
-# is historical; Hermes reuses the headers verbatim so the worker needs no change.
+# HMAC upgrade header names — MUST match the companion worker byte-for-byte (it
+# sends these on the WS upgrade and reads them on the outbound-call endpoint).
+# Do not rename without a matching change in the worker, or the handshake fails.
 HEADER_TIMESTAMP = "X-OpenClawTeamsBridge-Timestamp"
 HEADER_SIGNATURE = "X-OpenClawTeamsBridge-Signature"
 

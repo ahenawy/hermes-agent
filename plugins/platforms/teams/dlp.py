@@ -1,7 +1,7 @@
 """DLP redaction for outbound Teams messages.
 
-Scrubs secrets / PII from every outbound surface before it reaches Teams
-(mirrors openclaw #92081's DLP). Pure logic — the adapter calls :func:`redact`
+Scrubs secrets / PII from every outbound surface before it reaches Teams.
+Pure logic — the adapter calls :func:`redact`
 at its delivery choke point (block sends, streamed replies, edits, card strings).
 
 Built-in categories: ``email``, ``secret`` (API keys / tokens). Operators can add

@@ -1,7 +1,7 @@
 """Per-call vision spend cap — a sliding 60-second window.
 
 Bounds vision-model cost across all consumers (look_at_screen, ambient push).
-``max_per_minute <= 0`` means unlimited. Port of the openclaw vision budget.
+``max_per_minute <= 0`` means unlimited.
 """
 
 from __future__ import annotations
