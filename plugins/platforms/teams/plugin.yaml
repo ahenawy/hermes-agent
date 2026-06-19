@@ -31,7 +31,7 @@ optional_env:
     prompt: "Webhook port"
     password: false
   - name: TEAMS_SHAREPOINT_SITE_ID
-    description: "SharePoint site id (host,siteGuid,webGuid) for sending files into chats; needs the bot app's Graph Sites.ReadWrite.All permission"
+    description: "SharePoint (OneDrive) site id (host,siteGuid,webGuid) for sending files into chats; needs the bot app's Graph Sites.ReadWrite.All permission"
     prompt: "SharePoint site id"
     password: false
   - name: TEAMS_ALLOWED_USERS

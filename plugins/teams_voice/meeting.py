@@ -4,8 +4,8 @@ The voice handlers append each caller/assistant turn to a :class:`MeetingTranscr
 At call end (opt-in ``meeting_recap``) or on the ``post_meeting_minutes`` tool, the
 agent summarizes the transcript into minutes which are posted to the Teams chat via
 the adapter's standalone Bot Framework sender. A Word-openable ``.docx`` is also
-generated; when ``sharePointSiteId`` is configured it is uploaded to SharePoint and
-attached to the chat as a native file card, otherwise the minutes post as text.
+generated; when ``sharePointSiteId`` is configured it is uploaded to SharePoint
+(OneDrive) and attached to the chat as a native file card, otherwise it posts as text.
 """
 
 from __future__ import annotations

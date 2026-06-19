@@ -1,4 +1,4 @@
-"""Microsoft Graph → SharePoint file upload, for sending files into Teams chats.
+"""Microsoft Graph → SharePoint (OneDrive) file upload, for sending files into Teams chats.
 
 Bots can't post files via ``/me/drive``; group chats and channels need the file
 uploaded to a SharePoint site (configured via ``sharePointSiteId``) and shared with
