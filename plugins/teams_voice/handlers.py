@@ -32,7 +32,7 @@ from .call_session_base import (
     _pending_pop,
     _pending_set,
 )
-from .call_tools import CallToolRunner
+from .call_tools import CallContext, CallToolRunner
 from .config import BYTES_PER_FRAME, FRAME_DURATION_MS, PCM_SAMPLE_RATE_HZ, TeamsVoiceConfig
 from .echo_guard import EchoGuard
 from .outbound import OutboundError, place_call
@@ -95,13 +95,22 @@ class RealtimeCallSessionHandler(BaseTeamsCallHandler):
         self._vision_budget = VisionBudget(bridge_config.max_vision_per_minute if bridge_config else 30)
         self._last_speaker = ""  # from unmixed-audio speaker_name, for attribution
         self._auto_on = True  # server-VAD auto-response (off until 1:1 is confirmed)
-        self._tools = CallToolRunner(self)
+        self._tools: CallToolRunner | None = None  # built once the session is established
 
     # ── lifecycle ────────────────────────────────────────────────────────────
+
+    def _tool_context(self) -> CallContext:
+        """Typed per-call context for the tool runner (references stable post-begin)."""
+        return CallContext(
+            bridge=self._bridge, session=self._session, caller=self._caller,
+            consult=self._consult, vision=self._vision, vision_budget=self._vision_budget,
+            meeting=self._meeting, thread_id=self._thread_id,
+        )
 
     async def on_session_start(self, session: CallSession, msg: protocol.SessionStart) -> None:
         if not await self._begin_session(session, msg):  # state + allowlist + scope
             return
+        self._tools = CallToolRunner(self._tool_context())
 
         rt = RealtimeSession(replace(self._cfg, instructions=self._build_instructions()))
         rt.tools = realtime_tools.default_tools()
@@ -151,17 +160,17 @@ class RealtimeCallSessionHandler(BaseTeamsCallHandler):
         # (recording active), not while the phone is still ringing (greet-on-answer).
         if not session.recording_active or self._rt is None:
             return
-        if self._outbound and self._pending_greeting:
-            greeting, self._pending_greeting = self._pending_greeting, None
+        plan = self._greeting_plan()
+        if plan is None:
+            return
+        kind, payload = plan
+        if kind == "deliver":
             await self._rt.request_say(
                 f"The caller just answered. Deliver this result clearly and concisely, "
-                f"then say goodbye: {greeting}"
+                f"then say goodbye: {payload}"
             )
-        elif not self._outbound and not self._greeted:
-            # Roster greeting by name, on answer (not while ringing).
-            self._greeted = True
-            name = self._first_name()
-            who = f" the caller, {name}," if name else " the caller"
+        else:  # greet by name, on answer (not while ringing)
+            who = f" the caller, {payload}," if payload else " the caller"
             await self._rt.request_say(
                 f"Greet{who} warmly and briefly, then ask how you can help."
             )
@@ -360,6 +369,8 @@ class RealtimeCallSessionHandler(BaseTeamsCallHandler):
             args = {}
         # Show a "thinking" face while the tool runs; the reply re-cues the emotion.
         await self._safe_expression(expression.THINKING)
+        if self._tools is None:
+            return
         result = await self._tools.run_tool(name, args if isinstance(args, dict) else {})
         if self._rt is not None:
             await self._rt.send_function_result(call_id, result or "Done.")
@@ -396,17 +407,14 @@ class StreamingCallSessionHandler(BaseTeamsCallHandler):
 
     async def on_recording_status(self, session: CallSession, msg: protocol.RecordingStatus) -> None:
         await super().on_recording_status(session, msg)
-        if not session.recording_active or self._greeted:
+        if not session.recording_active:
             return
-        self._greeted = True
-        # Greet-on-answer: outbound speaks the pending result; inbound greets by name.
-        if self._outbound and self._pending_greeting:
-            text, self._pending_greeting = self._pending_greeting, None
-        elif not self._outbound:
-            name = self._first_name()
-            text = f"Hello{(' ' + name) if name else ''}, how can I help you?"
-        else:
+        plan = self._greeting_plan()
+        if plan is None:
             return
+        kind, payload = plan
+        # deliver → speak the result verbatim; greet → friendly inbound greeting.
+        text = payload if kind == "deliver" else f"Hello{(' ' + payload) if payload else ''}, how can I help you?"
         self._processing = True  # half-duplex: hold the turn while we greet
         self._utterance_task = asyncio.create_task(self._speak_turn(text))
 

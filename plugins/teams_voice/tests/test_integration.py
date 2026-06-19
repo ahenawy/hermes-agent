@@ -168,3 +168,28 @@ def test_meeting_post_minutes_injected_deliver():
     assert "posted the minutes" in out.lower()
     assert delivered["conv"] == "19:abc@thread.v2"
     assert "Key Points" in delivered["text"]
+
+
+def _streaming():
+    return handlers.StreamingCallSessionHandler(bridge_config=resolve_config(extra={"shared_secret": "s"}))
+
+
+def test_greeting_plan_inbound_greets_once():
+    h = _streaming()
+    h._caller = protocol.CallerInfo(aad_id="a", display_name="Dee Smith")
+    assert h._greeting_plan() == ("greet", "Dee")
+    assert h._greeting_plan() is None  # fires once
+
+
+def test_greeting_plan_outbound_delivers_pending():
+    h = _streaming()
+    h._outbound = True
+    h._pending_greeting = "the result"
+    assert h._greeting_plan() == ("deliver", "the result")
+    assert h._greeting_plan() is None  # pending consumed, fires once
+
+
+def test_greeting_plan_outbound_without_pending_is_silent():
+    h = _streaming()
+    h._outbound = True
+    assert h._greeting_plan() is None
