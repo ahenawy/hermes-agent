@@ -132,6 +132,9 @@ plugins:
         shared_secret: ${TEAMS_VOICE_SHARED_SECRET}   # secret stays in .env
         host: 127.0.0.1
         port: 8443
+        # Attach meeting-minutes .docx to the Teams chat (needs Graph
+        # Sites.ReadWrite.All on the bot app); omit for text-only minutes.
+        share_point_site_id: ${TEAMS_SHAREPOINT_SITE_ID}
         realtime:
           backend: azure
           azure_endpoint: https://pcfcaoai2.cognitiveservices.azure.com
@@ -149,6 +152,9 @@ plugins:
 ```bash
 TEAMS_VOICE_SHARED_SECRET=...        # must equal the worker's shared-secret setting
 AZURE_FOUNDRY_API_KEY=...            # realtime key (also used by the gateway)
+# SharePoint (OneDrive) site for attaching files/minutes to chats — host,siteGuid,webGuid
+# (the bot AAD app — TEAMS_CLIENT_ID — needs Graph Sites.ReadWrite.All, admin-consented):
+TEAMS_SHAREPOINT_SITE_ID=contoso.sharepoint.com,<siteGuid>,<webGuid>
 # fully env-only is fine too:
 TEAMS_VOICE_HOST=127.0.0.1
 TEAMS_VOICE_PORT=8443
