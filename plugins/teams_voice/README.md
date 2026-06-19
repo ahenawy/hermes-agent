@@ -64,6 +64,27 @@ renders the avatar tile and is paired over the HMAC bridge.
 
 Recent: real ElevenLabs `/with-timestamps` viseme alignment (streaming path; estimator fallback), Arabic visemes, and a Word-openable `.docx` minutes artifact. Remaining: inline DOCX *attachment* to the Teams chat (cross-process delivery is text-only — the artifact is generated and saved).
 
+## Worker-owned (inherited from OpenClawBridge — not in this driver)
+
+These are Microsoft Graph Calling / `Skype.Bots.Media` concerns. The driver bridges
+audio/video/control but is not connected to Graph Calling and does not drive media
+subscription, so it **cannot** implement them — they are inherited from the reused
+.NET worker, and the driver must not try to reimplement them:
+
+* **Outbound voicemail fallback** — the worker places the Graph call; voicemail +
+  its transcription is Teams platform behavior. The driver only supplies the spoken
+  result text.
+* **Outbound auto-hangup / no-answer timeout** — the *policy* (when to give up) can
+  live here, but terminating a Teams call is a Graph action only the worker can do.
+* **Active-speaker camera follow / re-select** — the worker does dominant-speaker
+  matching + MSI/VBSS subscription; the driver only receives `video.frame`.
+* **Roster `displayName`** — Graph leaves `DisplayName` null on the incoming-call
+  identity; the worker resolves it from the live participant roster before sending
+  `session.start`. **Fixed worker-side** (`multi-identity-per-ip @ 2cb86e6`+); the
+  driver already reads `caller.displayName`, so the by-name greeting works with no
+  driver change. Run that worker build (or cherry-pick the commit) for named
+  greetings; PSTN / anonymous / unmatched callers fall through to a generic greeting.
+
 ## Wire contract (fixed by the worker — do not drift)
 
 * **Handshake:** `HMAC-SHA256(sharedSecret, "{timestampMs}.{callId}")`, lowercase
