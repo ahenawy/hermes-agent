@@ -18,6 +18,8 @@ NEUTRAL = "neutral"
 HAPPY = "happy"
 SAD = "sad"
 SURPRISED = "surprised"
+# Transient state cue (not inferred from text) — shown while a tool runs.
+THINKING = "thinking"
 
 _SURPRISED_PUNCT = re.compile(r"(!!|\?!|!\?)")
 _SURPRISED_WORDS = frozenset(

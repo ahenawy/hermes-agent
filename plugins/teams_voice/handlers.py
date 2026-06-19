@@ -17,10 +17,11 @@ import asyncio
 import base64
 import json
 import logging
-import uuid
+import time
+from dataclasses import replace
 from pathlib import Path
 
-from . import audio, expression, protocol, realtime_tools, viseme_estimate
+from . import audio, expression, group_call_gate, protocol, realtime_tools, verbal_interrupts, viseme_estimate
 from .agent_consult import AgentConsult
 from .bridge_server import CallSession, CallSessionHandler
 from .config import BYTES_PER_FRAME, FRAME_DURATION_MS, PCM_SAMPLE_RATE_HZ, TeamsVoiceConfig
@@ -72,6 +73,7 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         self._session: CallSession | None = None
         self._caller: protocol.CallerInfo | None = None
         self._outbound = False
+        self._greeted = False
         self._pending_greeting: str | None = None
         # Outbound (model -> worker) framing state.
         self._out_seq = 0
@@ -84,6 +86,10 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         self._echo = EchoGuard()
         self._vision = VisionStore()
         self._consult = AgentConsult()
+        # Group-call gate state.
+        self._gate_cfg = group_call_gate.GroupCallGateConfig(wake_phrases=("assistant", "hermes"))
+        self._last_addressed_ms: float | None = None
+        self._drop_response = False  # deterministic egress drop for gated turns
 
     # ── lifecycle ────────────────────────────────────────────────────────────
 
@@ -96,10 +102,11 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         if self._outbound:
             self._pending_greeting = _PENDING_OUTBOUND.pop(msg.call_id, None)
 
-        rt = RealtimeSession(self._cfg)
+        rt = RealtimeSession(replace(self._cfg, instructions=self._build_instructions()))
         rt.tools = realtime_tools.default_tools()
         rt.on_audio_delta = self._on_model_audio
         rt.on_transcript_delta = self._on_transcript
+        rt.on_input_transcript = self._on_input_transcript
         rt.on_speech_started = self._on_barge_in
         rt.on_response_done = self._on_response_done
         rt.on_function_call = self._on_function_call
@@ -109,19 +116,45 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         except Exception:  # noqa: BLE001 — keep socket; worker shows neutral avatar
             logger.error("[teams_voice] realtime connect failed for %s", session.call_id, exc_info=True)
             return
-        # Inbound greeting fires from the model; outbound waits for recording-active.
-        if not self._outbound:
-            await self._safe_expression(expression.NEUTRAL)
+        # Greeting fires on recording-active (greet-on-answer); show a neutral face now.
+        await self._safe_expression(expression.NEUTRAL)
+
+    def _first_name(self) -> str:
+        name = (self._caller.display_name if self._caller else "") or ""
+        return name.strip().split(" ")[0] if name.strip() else ""
+
+    def _build_instructions(self) -> str:
+        """Augment base instructions with roster name + group-gate etiquette."""
+        parts = [self._cfg.instructions]
+        name = self._first_name()
+        if name:
+            parts.append(f"The caller's first name is {name}; address them by name naturally.")
+        phrases = ", ".join(f'"{p}"' for p in self._gate_cfg.wake_phrases)
+        parts.append(
+            "If more than one person is on the call, stay silent unless someone "
+            f"addresses you by name ({phrases}); in a one-on-one call respond normally."
+        )
+        return " ".join(parts)
 
     async def on_recording_status(self, session: CallSession, msg: protocol.RecordingStatus) -> None:
         await super().on_recording_status(session, msg)
         # Outbound delivery: speak the result only once the callee has answered
         # (recording active), not while the phone is still ringing (greet-on-answer).
-        if self._outbound and session.recording_active and self._pending_greeting and self._rt:
+        if not session.recording_active or self._rt is None:
+            return
+        if self._outbound and self._pending_greeting:
             greeting, self._pending_greeting = self._pending_greeting, None
             await self._rt.request_say(
                 f"The caller just answered. Deliver this result clearly and concisely, "
                 f"then say goodbye: {greeting}"
+            )
+        elif not self._outbound and not self._greeted:
+            # Roster greeting by name, on answer (not while ringing).
+            self._greeted = True
+            name = self._first_name()
+            who = f" the caller, {name}," if name else " the caller"
+            await self._rt.request_say(
+                f"Greet{who} warmly and briefly, then ask how you can help."
             )
 
     async def on_audio_frame(self, session: CallSession, msg: protocol.AudioFrame) -> None:
@@ -159,6 +192,9 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         session = self._session
         if session is None:
             return
+        if self._drop_response:  # group gate dropped this (unaddressed) turn
+            self._out_residual = b""
+            return
         pcm16 = audio.resample_pcm16(pcm24, REALTIME_SAMPLE_RATE_HZ, PCM_SAMPLE_RATE_HZ)
         frames, self._out_residual = audio.frame_pcm16(self._out_residual + pcm16, BYTES_PER_FRAME)
         for frame in frames:
@@ -190,7 +226,8 @@ class RealtimeCallSessionHandler(CallSessionHandler):
             except Exception:  # noqa: BLE001
                 pass
 
-    async def _on_barge_in(self) -> None:
+    async def _cut_playback(self) -> None:
+        """Stop playback immediately: flush the worker queue and cancel the model."""
         self._turn_id += 1
         self._echo.collapse()
         self._echo.mark_caller_turn()
@@ -202,6 +239,36 @@ class RealtimeCallSessionHandler(CallSessionHandler):
                 pass
         if self._rt is not None:
             await self._rt.cancel_response()
+
+    async def _on_barge_in(self) -> None:
+        await self._cut_playback()
+
+    async def _on_input_transcript(self, text: str) -> None:
+        """Caller's finished turn — drive verbal interrupts and the group gate."""
+        self._echo.mark_caller_turn()
+        # 1) Deterministic verbal interrupt ("stop" / "توقف" / "⟨name⟩, stop").
+        if verbal_interrupts.is_verbal_interrupt(text, self._gate_cfg.wake_phrases):
+            self._drop_response = True  # suppress any reply to the interrupt itself
+            await self._cut_playback()
+            return
+        # 2) Group-call gate: stay silent unless addressed (2+ humans).
+        is_group = (self._session.human_count if self._session else 0) >= 2
+        now = time.monotonic() * 1000.0
+        decision = group_call_gate.should_respond_to_group_turn(
+            transcript=text,
+            is_group=is_group,
+            config=self._gate_cfg,
+            last_addressed_at_ms=self._last_addressed_ms,
+            now_ms=now,
+        )
+        if decision.respond:
+            if decision.addressed:
+                self._last_addressed_ms = now
+        else:
+            # Unaddressed meeting turn: drop the auto-created reply at the egress.
+            self._drop_response = True
+            if self._rt is not None:
+                await self._rt.cancel_response()
 
     async def _on_response_done(self) -> None:
         session = self._session
@@ -218,6 +285,7 @@ class RealtimeCallSessionHandler(CallSessionHandler):
         self._out_residual = b""
         self._transcript = ""
         self._last_emotion = None
+        self._drop_response = False  # next turn starts fresh
 
     # ── tool dispatch ────────────────────────────────────────────────────────
 
@@ -226,6 +294,8 @@ class RealtimeCallSessionHandler(CallSessionHandler):
             args = json.loads(args_json or "{}")
         except (TypeError, ValueError):
             args = {}
+        # Show a "thinking" face while the tool runs; the reply re-cues the emotion.
+        await self._safe_expression(expression.THINKING)
         result = await self._run_tool(name, args if isinstance(args, dict) else {})
         if self._rt is not None:
             await self._rt.send_function_result(call_id, result or "Done.")
