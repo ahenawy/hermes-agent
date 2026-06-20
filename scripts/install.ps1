@@ -15,7 +15,7 @@
 param(
     [switch]$NoVenv,
     [switch]$SkipSetup,
-    [string]$Branch = $(if ($env:HERMES_BRANCH) { $env:HERMES_BRANCH } else { "main" }),
+    [string]$Branch = "main",
     # -Commit and -Tag are higher-precedence variants of -Branch for users
     # who need reproducible installs (desktop installer pinning, CI, release
     # bundles).  When set, the repository stage clones $Branch (faster than
@@ -92,8 +92,12 @@ try {
 # Configuration
 # ============================================================================
 
-$RepoUrlSsh = $(if ($env:HERMES_REPO_SSH) { $env:HERMES_REPO_SSH } else { "git@github.com:NousResearch/hermes-agent.git" })
-$RepoUrlHttps = $(if ($env:HERMES_REPO_HTTPS) { $env:HERMES_REPO_HTTPS } else { "https://github.com/NousResearch/hermes-agent.git" })
+$RepoUrlSsh = "git@github.com:NousResearch/hermes-agent.git"
+$RepoUrlHttps = "https://github.com/NousResearch/hermes-agent.git"
+# Fork override (upstream lines above + the Branch param untouched -> conflict-free sync):
+if ($env:HERMES_REPO_SSH) { $RepoUrlSsh = $env:HERMES_REPO_SSH }
+if ($env:HERMES_REPO_HTTPS) { $RepoUrlHttps = $env:HERMES_REPO_HTTPS }
+if (-not $PSBoundParameters.ContainsKey('Branch') -and $env:HERMES_BRANCH) { $Branch = $env:HERMES_BRANCH }
 $PythonVersion = "3.11"
 $NodeVersion = "22"
 

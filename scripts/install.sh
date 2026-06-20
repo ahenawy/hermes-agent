@@ -43,8 +43,12 @@ NC='\033[0m' # No Color
 BOLD='\033[1m'
 
 # Configuration
-REPO_URL_SSH="${HERMES_REPO_SSH:-git@github.com:NousResearch/hermes-agent.git}"
-REPO_URL_HTTPS="${HERMES_REPO_HTTPS:-https://github.com/NousResearch/hermes-agent.git}"
+REPO_URL_SSH="git@github.com:NousResearch/hermes-agent.git"
+REPO_URL_HTTPS="https://github.com/NousResearch/hermes-agent.git"
+# Fork override (upstream lines above untouched -> conflict-free sync): set
+# HERMES_REPO_SSH / HERMES_REPO_HTTPS / HERMES_BRANCH to install from a fork.
+[ -n "${HERMES_REPO_SSH:-}" ] && REPO_URL_SSH="$HERMES_REPO_SSH"
+[ -n "${HERMES_REPO_HTTPS:-}" ] && REPO_URL_HTTPS="$HERMES_REPO_HTTPS"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 # INSTALL_DIR is resolved AFTER arg parsing and OS detection so we can pick an
 # FHS-style layout for root installs.  Track whether the user gave us an
@@ -71,7 +75,8 @@ USE_VENV=true
 RUN_SETUP=true
 SKIP_BROWSER=false
 NO_SKILLS=false
-BRANCH="${HERMES_BRANCH:-main}"
+BRANCH="main"
+[ -n "${HERMES_BRANCH:-}" ] && BRANCH="$HERMES_BRANCH"  # fork override; --branch still wins
 INSTALL_COMMIT=""
 ENSURE_DEPS=""
 POSTINSTALL_MODE=false
