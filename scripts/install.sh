@@ -6,7 +6,7 @@
 # Uses uv for desktop/server installs and Python's stdlib venv + pip on Termux.
 #
 # Usage:
-#   curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/ahenawy/hermes-agent/next/scripts/install.sh | bash
 #
 # Or with options:
 #   curl -fsSL ... | bash -s -- --no-venv --skip-setup
@@ -43,12 +43,8 @@ NC='\033[0m' # No Color
 BOLD='\033[1m'
 
 # Configuration
-REPO_URL_SSH="git@github.com:NousResearch/hermes-agent.git"
-REPO_URL_HTTPS="https://github.com/NousResearch/hermes-agent.git"
-# Fork override (upstream lines above untouched -> conflict-free sync): set
-# HERMES_REPO_SSH / HERMES_REPO_HTTPS / HERMES_BRANCH to install from a fork.
-[ -n "${HERMES_REPO_SSH:-}" ] && REPO_URL_SSH="$HERMES_REPO_SSH"
-[ -n "${HERMES_REPO_HTTPS:-}" ] && REPO_URL_HTTPS="$HERMES_REPO_HTTPS"
+REPO_URL_SSH="git@github.com:ahenawy/hermes-agent.git"
+REPO_URL_HTTPS="https://github.com/ahenawy/hermes-agent.git"
 HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 # INSTALL_DIR is resolved AFTER arg parsing and OS detection so we can pick an
 # FHS-style layout for root installs.  Track whether the user gave us an
@@ -75,8 +71,7 @@ USE_VENV=true
 RUN_SETUP=true
 SKIP_BROWSER=false
 NO_SKILLS=false
-BRANCH="main"
-[ -n "${HERMES_BRANCH:-}" ] && BRANCH="$HERMES_BRANCH"  # fork override; --branch still wins
+BRANCH="next"
 INSTALL_COMMIT=""
 ENSURE_DEPS=""
 POSTINSTALL_MODE=false
@@ -475,7 +470,7 @@ detect_os() {
             OS="windows"
             DISTRO="windows"
             log_error "Windows detected. Please use the PowerShell installer:"
-            log_info "  iex (irm https://hermes-agent.nousresearch.com/install.ps1)"
+            log_info "  iex (irm https://raw.githubusercontent.com/ahenawy/hermes-agent/next/scripts/install.ps1)"
             exit 1
             ;;
         *)
